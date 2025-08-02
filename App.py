@@ -1,106 +1,77 @@
 import streamlit as st
-import json
 import datetime
-import pandas as pd
+import os
+import json
+import tempfile
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from streamlit_calendar import calendar
-from st_aggrid import AgGrid, GridOptionsBuilder
 
-# ---- CONFIG ----
+# Set the scope
 SCOPES = ['https://www.googleapis.com/auth/calendar.readonly']
-st.set_page_config(page_title="📅 St. Cloud Calendar Viewer", layout="wide")
 
-# ---- HEADER ----
-st.title("📅 St. Cloud Google Calendar Viewer")
-st.markdown("""
-Upload your Google Calendar `credentials.json`, authorize the app, and view your upcoming events in both a calendar and table view.
+st.set_page_config(page_title="📅 Google Calendar Viewer", layout="wide")
+st.title("📅 Live Google Calendar Viewer")
 
-🔒 OAuth is handled securely. Your data is not stored.
-""")
+# Sidebar upload
+st.sidebar.header("🔐 Upload Google OAuth JSON")
+uploaded_file = st.sidebar.file_uploader("Upload your `client_secret.json`", type=["json"])
 
-# ---- SIDEBAR ----
-st.sidebar.header("🔐 Upload OAuth Credentials")
-uploaded_file = st.sidebar.file_uploader("Upload Google OAuth `credentials.json`", type="json")
-
-# ---- AUTH FUNCTION (streamlit cloud safe) ----
-def authenticate_with_google(credentials_data):
-    with open("temp_credentials.json", "w") as f:
-        json.dump(credentials_data, f)
-    flow = InstalledAppFlow.from_client_secrets_file("temp_credentials.json", SCOPES)
-    creds = flow.run_console()  # Use console-based auth for Streamlit Cloud
-    return creds
-
-# ---- FETCH EVENTS ----
-def fetch_calendar_events(creds):
-    service = build('calendar', 'v3', credentials=creds)
-    now = datetime.datetime.utcnow().isoformat() + 'Z'
-    result = service.events().list(
-        calendarId='primary', timeMin=now,
-        maxResults=50, singleEvents=True,
-        orderBy='startTime'
-    ).execute()
-    return result.get('items', [])
-
-# ---- FORMAT EVENTS FOR DISPLAY ----
-def format_for_calendar(events):
-    return [
-        {
-            "title": e.get("summary", "No Title"),
-            "start": e["start"].get("dateTime", e["start"].get("date")),
-            "end": e["end"].get("dateTime", e["end"].get("date")),
-        }
-        for e in events
-    ]
-
-def format_for_table(events):
-    return pd.DataFrame([
-        {
-            "Title": e.get("summary", "No Title"),
-            "Start": e["start"].get("dateTime", e["start"].get("date")),
-            "End": e["end"].get("dateTime", e["end"].get("date")),
-            "Location": e.get("location", ""),
-            "Description": e.get("description", "")
-        }
-        for e in events
-    ])
-
-# ---- MAIN APP LOGIC ----
 if uploaded_file:
     try:
-        creds_data = json.load(uploaded_file)
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".json") as tmp:
+            tmp.write(uploaded_file.read())
+            tmp_path = tmp.name
 
-        if "installed" not in creds_data:
+        # Validate if it's Desktop OAuth
+        with open(tmp_path) as f:
+            creds_json = json.load(f)
+
+        if creds_json.get("installed") is None:
             st.error("❌ Invalid credentials file. Must be a Desktop OAuth Client.")
         else:
-            creds = authenticate_with_google(creds_data)
-            events = fetch_calendar_events(creds)
+            # Authenticate
+            flow = InstalledAppFlow.from_client_secrets_file(tmp_path, SCOPES)
+            creds = flow.run_local_server(port=0)
+            service = build('calendar', 'v3', credentials=creds)
 
-            if events:
-                st.success(f"✅ Loaded {len(events)} events")
+            # Fetch events
+            now = datetime.datetime.utcnow().isoformat() + 'Z'
+            events_result = service.events().list(calendarId='primary', timeMin=now,
+                                                  maxResults=20, singleEvents=True,
+                                                  orderBy='startTime').execute()
+            events = events_result.get('items', [])
 
-                # 📅 Calendar View
-                st.subheader("📅 Calendar View")
+            if not events:
+                st.warning("No upcoming events found.")
+            else:
+                st.success(f"✅ Fetched {len(events)} upcoming event(s) from your Google Calendar.")
+
+                # Convert to fullcalendar format
+                calendar_events = []
+                for event in events:
+                    start = event['start'].get('dateTime', event['start'].get('date'))
+                    end = event['end'].get('dateTime', event['end'].get('date'))
+                    calendar_events.append({
+                        "title": event.get("summary", "No Title"),
+                        "start": start,
+                        "end": end,
+                    })
+
+                # Show in calendar
                 calendar_options = {
                     "initialView": "dayGridMonth",
                     "editable": False,
-                    "selectable": False,
-                    "height": 650
+                    "selectable": True,
+                    "height": "600px"
                 }
-                calendar(events=format_for_calendar(events), options=calendar_options)
 
-                # 📋 Table View
-                st.subheader("📋 Event Table")
-                df = format_for_table(events)
-                gb = GridOptionsBuilder.from_dataframe(df)
-                gb.configure_pagination()
-                gb.configure_default_column(filter=True)
-                AgGrid(df, gridOptions=gb.build(), theme="alpine", height=400)
+                calendar(events=calendar_events, options=calendar_options)
 
-            else:
-                st.info("No upcoming events found.")
     except Exception as e:
-        st.error(f"❌ Authentication failed: {e}")
+        st.error(f"❌ Error: {str(e)}")
 else:
-    st.info("👈 Upload your Google OAuth credentials JSON file to begin.")
+    st.info("👈 Upload your Google Calendar OAuth JSON file in the sidebar.")
+
+
 
