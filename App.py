@@ -2,105 +2,105 @@ import streamlit as st
 import json
 import datetime
 import pandas as pd
-from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
-from st_aggrid import AgGrid, GridOptionsBuilder
 from streamlit_calendar import calendar
+from st_aggrid import AgGrid, GridOptionsBuilder
 
-# Set Streamlit page config
-st.set_page_config(page_title="📆 Google Calendar Viewer", layout="wide")
-st.title("📅 Live Google Calendar Viewer with Calendar View")
-
-# Sidebar file upload
-st.sidebar.header("🔐 Google API Setup")
-uploaded_file = st.sidebar.file_uploader("Upload Google OAuth Credentials JSON", type="json")
-
-# Scopes for Google Calendar read-only
+# ---- CONFIG ----
 SCOPES = ['https://www.googleapis.com/auth/calendar.readonly']
+st.set_page_config(page_title="📅 St. Cloud Calendar Viewer", layout="wide")
 
+# ---- HEADER ----
+st.title("📅 St. Cloud Google Calendar Viewer")
+st.markdown("""
+Upload your Google Calendar `credentials.json`, authorize the app, and view your upcoming events in both a calendar and table view.
+
+🔒 OAuth is handled securely. Your data is not stored.
+""")
+
+# ---- SIDEBAR ----
+st.sidebar.header("🔐 Upload OAuth Credentials")
+uploaded_file = st.sidebar.file_uploader("Upload Google OAuth `credentials.json`", type="json")
+
+# ---- AUTH FUNCTION (streamlit cloud safe) ----
 def authenticate_with_google(credentials_data):
-    # Save temporary credentials file
-    with open("temp_google_creds.json", "w") as temp_file:
-        json.dump(credentials_data, temp_file)
-    # Run OAuth flow using temporary file
-    flow = InstalledAppFlow.from_client_secrets_file("temp_google_creds.json", SCOPES)
-    creds = flow.run_local_server(port=0)
+    with open("temp_credentials.json", "w") as f:
+        json.dump(credentials_data, f)
+    flow = InstalledAppFlow.from_client_secrets_file("temp_credentials.json", SCOPES)
+    creds = flow.run_console()  # Use console-based auth for Streamlit Cloud
     return creds
 
+# ---- FETCH EVENTS ----
 def fetch_calendar_events(creds):
     service = build('calendar', 'v3', credentials=creds)
     now = datetime.datetime.utcnow().isoformat() + 'Z'
-    events_result = service.events().list(
+    result = service.events().list(
         calendarId='primary', timeMin=now,
         maxResults=50, singleEvents=True,
         orderBy='startTime'
     ).execute()
-    return events_result.get('items', [])
+    return result.get('items', [])
 
+# ---- FORMAT EVENTS FOR DISPLAY ----
 def format_for_calendar(events):
-    cal_events = []
-    for e in events:
-        start = e['start'].get('dateTime', e['start'].get('date'))
-        end = e['end'].get('dateTime', e['end'].get('date'))
-        cal_events.append({
-            "title": e.get('summary', 'No Title'),
-            "start": start,
-            "end": end
-        })
-    return cal_events
+    return [
+        {
+            "title": e.get("summary", "No Title"),
+            "start": e["start"].get("dateTime", e["start"].get("date")),
+            "end": e["end"].get("dateTime", e["end"].get("date")),
+        }
+        for e in events
+    ]
 
 def format_for_table(events):
-    table_data = []
-    for e in events:
-        table_data.append({
-            "Title": e.get('summary', 'No Title'),
-            "Start": e['start'].get('dateTime', e['start'].get('date')),
-            "End": e['end'].get('dateTime', e['end'].get('date')),
-            "Location": e.get('location', ''),
-            "Description": e.get('description', '')
-        })
-    return pd.DataFrame(table_data)
+    return pd.DataFrame([
+        {
+            "Title": e.get("summary", "No Title"),
+            "Start": e["start"].get("dateTime", e["start"].get("date")),
+            "End": e["end"].get("dateTime", e["end"].get("date")),
+            "Location": e.get("location", ""),
+            "Description": e.get("description", "")
+        }
+        for e in events
+    ])
 
-# Main logic
+# ---- MAIN APP LOGIC ----
 if uploaded_file:
     try:
-        credentials_data = json.load(uploaded_file)
+        creds_data = json.load(uploaded_file)
 
-        # Make sure this is the correct type of credentials
-        if "installed" not in credentials_data:
-            st.error("❌ This file does not contain 'installed' credentials. Make sure it's an 'OAuth Client ID' for a desktop app.")
+        if "installed" not in creds_data:
+            st.error("❌ Invalid credentials file. Must be a Desktop OAuth Client.")
         else:
-            creds = authenticate_with_google(credentials_data)
+            creds = authenticate_with_google(creds_data)
             events = fetch_calendar_events(creds)
 
             if events:
-                st.success(f"✅ Loaded {len(events)} calendar events")
+                st.success(f"✅ Loaded {len(events)} events")
 
-                # 📆 Calendar view
-                st.subheader("📆 Calendar View")
-                calendar_events = format_for_calendar(events)
+                # 📅 Calendar View
+                st.subheader("📅 Calendar View")
                 calendar_options = {
                     "initialView": "dayGridMonth",
                     "editable": False,
                     "selectable": False,
                     "height": 650
                 }
-                calendar(events=calendar_events, options=calendar_options)
+                calendar(events=format_for_calendar(events), options=calendar_options)
 
-                # 📋 Table view
+                # 📋 Table View
                 st.subheader("📋 Event Table")
                 df = format_for_table(events)
                 gb = GridOptionsBuilder.from_dataframe(df)
                 gb.configure_pagination()
                 gb.configure_default_column(filter=True)
-                AgGrid(df, gridOptions=gb.build(), theme="alpine")
+                AgGrid(df, gridOptions=gb.build(), theme="alpine", height=400)
 
             else:
-                st.info("No upcoming events found in your calendar.")
-
+                st.info("No upcoming events found.")
     except Exception as e:
         st.error(f"❌ Authentication failed: {e}")
-
 else:
-    st.info("👈 Upload your valid Google OAuth credentials JSON to continue.")
+    st.info("👈 Upload your Google OAuth credentials JSON file to begin.")
+
