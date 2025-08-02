@@ -42,47 +42,68 @@ def authenticate_user(client_secrets_path):
             except Exception as e:
                 st.warning(f"Failed to refresh credentials: {str(e)}")
         
-        # Create new credentials
-        flow = Flow.from_client_secrets_file(
-            client_secrets_path,
-            scopes=SCOPES,
-            redirect_uri='http://localhost:8080'
-        )
-        
-        # Generate authorization URL
-        auth_url, _ = flow.authorization_url(
-            access_type='offline',
-            include_granted_scopes='true'
-        )
-        
-        st.markdown("### 🔐 Authorization Required")
-        st.markdown(f"**Step 1:** Click the link below to authorize the application:")
-        st.markdown(f"[🔗 Authorize Google Calendar Access]({auth_url})")
-        
-        # Input field for authorization code
-        auth_code = st.text_input(
-            "**Step 2:** Paste the authorization code here:",
-            placeholder="Enter the authorization code from Google...",
-            help="After clicking the link above, you'll get a code. Paste it here."
-        )
-        
-        if auth_code:
+        # Try different OAuth flows based on credentials type
+        try:
+            # First try InstalledAppFlow for desktop apps
+            from google_auth_oauthlib.flow import InstalledAppFlow
+            flow = InstalledAppFlow.from_client_secrets_file(client_secrets_path, SCOPES)
+            
+            st.markdown("### 🔐 Authorization Required")
+            st.markdown("**Step 1:** Click the button below to start authorization:")
+            
+            if st.button("🔗 Start Authorization"):
+                try:
+                    # This will open a browser window for auth
+                    creds = flow.run_local_server(port=0, open_browser=False)
+                    save_credentials(creds)
+                    st.success("✅ Authentication successful!")
+                    st.rerun()
+                    return creds
+                except Exception as e:
+                    st.error(f"Local server auth failed: {str(e)}")
+                    # Fall back to manual flow
+                    pass
+            
+            # Manual authorization flow
             try:
-                # Exchange authorization code for credentials
-                flow.fetch_token(code=auth_code)
-                creds = flow.credentials
-                save_credentials(creds)
-                st.success("✅ Authentication successful!")
-                st.rerun()
-                return creds
-            except Exception as e:
-                st.error(f"❌ Authentication failed: {str(e)}")
+                flow = Flow.from_client_secrets_file(
+                    client_secrets_path,
+                    scopes=SCOPES,
+                    redirect_uri='urn:ietf:wg:oauth:2.0:oob'
+                )
+                
+                auth_url, _ = flow.authorization_url(access_type='offline')
+                
+                st.markdown("**Alternative: Manual Authorization**")
+                st.markdown(f"If the button above doesn't work, use this link:")
+                st.markdown(f"[🔗 Manual Authorization Link]({auth_url})")
+                
+                auth_code = st.text_input(
+                    "Paste the authorization code here:",
+                    placeholder="Enter the authorization code...",
+                    help="Copy the code from the browser after authorization"
+                )
+                
+                if auth_code:
+                    flow.fetch_token(code=auth_code)
+                    creds = flow.credentials
+                    save_credentials(creds)
+                    st.success("✅ Authentication successful!")
+                    st.rerun()
+                    return creds
+                    
+            except Exception as flow_error:
+                st.error(f"Manual flow also failed: {str(flow_error)}")
                 return None
+                
+        except ImportError:
+            st.error("Required authentication libraries not available")
+            return None
         
         return None
         
     except Exception as e:
-        st.error(f"❌ Authentication error: {str(e)}")
+        st.error(f"❌ Authentication setup error: {str(e)}")
         return None
 
 def fetch_calendar_events(service, max_results=50):
