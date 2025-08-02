@@ -1,9 +1,8 @@
 import streamlit as st
 import datetime
-import os
 import json
 import tempfile
-from google_auth_oauthlib.flow import InstalledAppFlow
+from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from streamlit_calendar import calendar
 
@@ -63,23 +62,26 @@ def convert_to_calendar_format(events):
     
     return calendar_events
 
-# Main app logic
-st.sidebar.header("🔐 Upload Google OAuth JSON")
-uploaded_file = st.sidebar.file_uploader("Upload your `client_secret.json`", type=["json"])
+# Main app
+st.sidebar.header("🔐 Authentication")
+st.sidebar.subheader("Upload service_account.json")
+uploaded_file = st.sidebar.file_uploader(
+    "Drag and drop file here", 
+    type=["json"],
+    help="Limit 200MB per file • JSON"
+)
 
 if uploaded_file:
     try:
-        # Save uploaded file temporarily
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".json") as tmp:
-            tmp.write(uploaded_file.read())
-            tmp_path = tmp.name
-        
-        # Simple authentication using InstalledAppFlow
-        flow = InstalledAppFlow.from_client_secrets_file(tmp_path, SCOPES)
-        creds = flow.run_local_server(port=0)
+        # Load service account credentials
+        service_account_info = json.load(uploaded_file)
+        credentials = service_account.Credentials.from_service_account_info(
+            service_account_info, 
+            scopes=SCOPES
+        )
         
         # Build service
-        service = build('calendar', 'v3', credentials=creds)
+        service = build('calendar', 'v3', credentials=credentials)
         
         # Sidebar controls
         st.sidebar.header("📅 Calendar Options")
@@ -139,31 +141,9 @@ if uploaded_file:
                 for i, event in enumerate(events, 1):
                     start_time = event['start'].get('dateTime', event['start'].get('date'))
                     st.write(f"{i}. **{event.get('summary', 'No Title')}** - {start_time}")
-        
-        # Clean up temp file
-        if os.path.exists(tmp_path):
-            os.unlink(tmp_path)
             
     except Exception as e:
         st.error(f"❌ Error: {str(e)}")
 
 else:
-    st.info("👈 Upload your Google Calendar OAuth JSON file in the sidebar to get started.")
-    
-    # Instructions
-    with st.expander("📖 Setup Instructions"):
-        st.markdown("""
-        ### How to get your OAuth credentials:
-        
-        1. **Go to Google Cloud Console**: https://console.cloud.google.com/
-        2. **Create a new project** or select an existing one
-        3. **Enable the Google Calendar API**:
-           - Go to "APIs & Services" > "Library"
-           - Search for "Google Calendar API" and enable it
-        4. **Create OAuth 2.0 credentials**:
-           - Go to "APIs & Services" > "Credentials"
-           - Click "Create Credentials" > "OAuth client ID"
-           - Choose "Desktop application"
-           - Download the JSON file
-        5. **Upload the JSON file** using the sidebar uploader
-        """)
+    st.info("👈 Upload your service account JSON file in the sidebar to get started.")
