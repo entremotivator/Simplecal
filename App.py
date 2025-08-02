@@ -141,13 +141,106 @@ if uploaded_file:
         # Fetch all available calendars
         with st.spinner("Fetching available calendars..."):
             all_calendars = fetch_all_calendars(service)
+            
+            # Get service account email from credentials
+            service_account_email = service_account_info.get('client_email', 'Unknown')
         
         if not all_calendars:
             st.error("❌ No calendars found or insufficient permissions.")
-        else:
-            # Sidebar controls
-            st.sidebar.header("📅 Calendar Selection")
             
+            # Show detailed troubleshooting
+            with st.expander("🔧 Troubleshooting Guide"):
+                st.markdown(f"""
+                ### Service Account Setup Required
+                
+                Your service account email: `{service_account_email}`
+                
+                **Service accounts don't automatically have access to calendars.** You need to:
+                
+                #### Option 1: Share Your Personal Calendar
+                1. Open [Google Calendar](https://calendar.google.com)
+                2. Find your calendar in the left sidebar
+                3. Click the three dots ⋮ next to your calendar
+                4. Select "Settings and sharing"
+                5. Scroll to "Share with specific people or groups"
+                6. Click "Add people and groups"
+                7. Enter your service account email: `{service_account_email}`
+                8. Choose permission level (at least "See all event details")
+                9. Click "Send"
+                
+                #### Option 2: Use Calendar ID Directly
+                If you know a calendar ID, you can try accessing it directly using the manual input below.
+                
+                #### Option 3: Domain-Wide Delegation (G Workspace)
+                For G Workspace accounts, you can enable domain-wide delegation in Google Admin Console.
+                """)
+            
+            # Still show manual input option
+            st.sidebar.header("📅 Try Manual Calendar Access")
+            manual_calendar = st.sidebar.text_input(
+                "Calendar ID or Email:",
+                placeholder="your-email@gmail.com",
+                help="Enter a calendar ID or email to try direct access"
+            )
+            
+            if manual_calendar and st.sidebar.button("🔍 Test Calendar Access"):
+                try:
+                    with st.spinner(f"Testing access to {manual_calendar}..."):
+                        test_events = service.events().list(
+                            calendarId=manual_calendar,
+                            maxResults=1
+                        ).execute()
+                    st.success(f"✅ Successfully accessed calendar: {manual_calendar}")
+                    
+                    # Store the working calendar for use
+                    st.session_state['working_calendars'] = [manual_calendar]
+                    st.rerun()
+                    
+                except Exception as e:
+                    st.error(f"❌ Cannot access calendar {manual_calendar}: {str(e)}")
+                    
+                    if "notFound" in str(e):
+                        st.info("💡 Calendar not found. Make sure the email/ID is correct.")
+                    elif "Forbidden" in str(e):
+                        st.info(f"💡 Access denied. Share the calendar with your service account: `{service_account_email}`")
+        else:
+        # Check if we have working calendars from manual input
+        working_calendars = st.session_state.get('working_calendars', [])
+        
+        if working_calendars:
+            st.success(f"✅ Using manually added calendar(s): {', '.join(working_calendars)}")
+            selected_calendars = working_calendars
+            
+            # Allow adding more calendars manually
+            st.sidebar.header("📅 Add More Calendars")
+            additional_calendar = st.sidebar.text_input(
+                "Additional Calendar ID/Email:",
+                placeholder="another-calendar@gmail.com"
+            )
+            
+            if st.sidebar.button("➕ Add Another Calendar"):
+                if additional_calendar and additional_calendar not in selected_calendars:
+                    try:
+                        # Test access first
+                        test_events = service.events().list(
+                            calendarId=additional_calendar,
+                            maxResults=1
+                        ).execute()
+                        selected_calendars.append(additional_calendar)
+                        st.session_state['working_calendars'] = selected_calendars
+                        st.sidebar.success(f"Added: {additional_calendar}")
+                        st.rerun()
+                    except Exception as e:
+                        st.sidebar.error(f"Cannot access {additional_calendar}: {str(e)}")
+            
+            if st.sidebar.button("🗑️ Clear All Calendars"):
+                if 'working_calendars' in st.session_state:
+                    del st.session_state['working_calendars']
+                st.rerun()
+                
+        else:
+            # Original calendar selection logic
+            st.sidebar.header("📅 Calendar Selection")
             # Display available calendars with checkboxes
             st.sidebar.subheader("Select Calendars:")
             selected_calendars = []
