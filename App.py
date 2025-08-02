@@ -157,11 +157,6 @@ def main():
             with open(tmp_path) as f:
                 creds_json = json.load(f)
             
-            # Check if it's the correct type of OAuth client
-            if creds_json.get("installed") is None and creds_json.get("web") is None:
-                st.sidebar.error("❌ Invalid credentials file. Must be an OAuth 2.0 Client ID.")
-                return
-            
             st.sidebar.success("✅ Valid credentials file uploaded")
             
             # Authentication
